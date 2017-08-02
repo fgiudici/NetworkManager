@@ -655,6 +655,11 @@ get_secret_flags (NMSetting *setting,
 	unsigned long tmp;
 	NMSettingSecretFlags flags = NM_SETTING_SECRET_FLAG_NONE;
 
+	if (g_str_has_prefix (secret_name, "x-vpn-interactive-")) {
+		NM_SET_OUT (out_flags, NM_SETTING_SECRET_FLAG_NOT_SAVED);
+		return TRUE;
+	}
+
 	flags_key = g_strdup_printf ("%s-flags", secret_name);
 	if (g_hash_table_lookup_extended (priv->data, flags_key, NULL, &val)) {
 		errno = 0;

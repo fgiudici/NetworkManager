@@ -1102,13 +1102,16 @@ get_secrets_done_cb (NMAgentManager *manager,
 	nm_connection_clear_secrets (NM_CONNECTION (self));
 	if (!dict || nm_connection_update_secrets (NM_CONNECTION (self), setting_name, dict, &local)) {
 		GVariant *filtered_secrets;
+		ForEachSecretFlags tmp_flags = cmp_flags;
+
+		tmp_flags.forbidden |= NM_SETTING_SECRET_FLAG_NOT_SAVED;
 
 		/* Update the connection with the agent's secrets; by this point if any
 		 * system-owned secrets exist in 'secrets' the agent that provided them
 		 * will have been authenticated, so those secrets can replace the existing
 		 * system secrets.
 		 */
-		filtered_secrets = for_each_secret (NM_CONNECTION (self), secrets, TRUE, validate_secret_flags, &cmp_flags);
+		filtered_secrets = for_each_secret (NM_CONNECTION (self), secrets, TRUE, validate_secret_flags, &tmp_flags);
 		if (nm_connection_update_secrets (NM_CONNECTION (self), setting_name, filtered_secrets, &local)) {
 			/* Now that all secrets are updated, copy and cache new secrets,
 			 * then save them to backing storage.
