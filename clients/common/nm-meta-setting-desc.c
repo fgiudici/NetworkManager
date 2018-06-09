@@ -6915,6 +6915,9 @@ static const NMMetaPropertyInfo *const property_infos_VPN[] = {
 		.prompt =                       N_("Username [none]"),
 		.property_type =                &_pt_gobject_string,
 	),
+	PROPERTY_INFO_WITH_DESC (NM_SETTING_VPN_ASK_USER_NAME,
+		.property_type =                &_pt_gobject_bool,
+	),
 	PROPERTY_INFO_WITH_DESC (NM_SETTING_VPN_DATA,
 		.property_type = DEFINE_PROPERTY_TYPE (
 			.get_fcn =                  _get_fcn_vpn_data,

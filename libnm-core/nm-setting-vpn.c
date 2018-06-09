@@ -58,6 +58,11 @@ typedef struct {
 	 */
 	char *user_name;
 
+	/* Whether NM should ask interactively the user name to available
+	 * secret agents if the username in the setting is empty.
+	 */
+	gboolean ask_user_name;
+
 	/* Whether the VPN stays up across link changes, until the user
 	 * explicitly disconnects it.
 	 */
@@ -89,6 +94,7 @@ enum {
 	PROP_0,
 	PROP_SERVICE_TYPE,
 	PROP_USER_NAME,
+	PROP_ASK_USER_NAME,
 	PROP_PERSISTENT,
 	PROP_DATA,
 	PROP_SECRETS,
@@ -139,6 +145,14 @@ nm_setting_vpn_get_user_name (NMSettingVpn *setting)
 	g_return_val_if_fail (NM_IS_SETTING_VPN (setting), NULL);
 
 	return NM_SETTING_VPN_GET_PRIVATE (setting)->user_name;
+}
+
+gboolean
+nm_setting_vpn_get_ask_user_name (NMSettingVpn *setting)
+{
+	g_return_val_if_fail (NM_IS_SETTING_VPN (setting), FALSE);
+
+	return NM_SETTING_VPN_GET_PRIVATE (setting)->ask_user_name;
 }
 
 /**
@@ -825,6 +839,9 @@ set_property (GObject *object, guint prop_id,
 		g_free (priv->user_name);
 		priv->user_name = g_value_dup_string (value);
 		break;
+	case PROP_ASK_USER_NAME:
+		priv->ask_user_name = g_value_get_boolean (value);
+		break;
 	case PROP_PERSISTENT:
 		priv->persistent = g_value_get_boolean (value);
 		break;
@@ -858,6 +875,9 @@ get_property (GObject *object, guint prop_id,
 		break;
 	case PROP_USER_NAME:
 		g_value_set_string (value, nm_setting_vpn_get_user_name (setting));
+		break;
+	case PROP_ASK_USER_NAME:
+		g_value_set_boolean (value, priv->ask_user_name);
 		break;
 	case PROP_PERSISTENT:
 		g_value_set_boolean (value, priv->persistent);
@@ -929,6 +949,21 @@ nm_setting_vpn_class_init (NMSettingVpnClass *setting_class)
 		                      NULL,
 		                      G_PARAM_READWRITE |
 		                      G_PARAM_STATIC_STRINGS));
+
+	/**
+	 * NMSettingVpn:ask-user-name:
+	 *
+	 * If this property is %TRUE and a user name is not set, NetworkManager will
+	 * ask it to available secret agents.
+	 *
+	 * Since: 1.12
+	 **/
+	g_object_class_install_property
+		(object_class, PROP_ASK_USER_NAME,
+		 g_param_spec_boolean (NM_SETTING_VPN_ASK_USER_NAME, "", "",
+		                       FALSE,
+		                       G_PARAM_READWRITE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMSettingVpn:persistent:
