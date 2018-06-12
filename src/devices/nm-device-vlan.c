@@ -49,7 +49,6 @@ NM_GOBJECT_PROPERTIES_DEFINE (NMDeviceVlan,
 typedef struct {
 	gulong parent_state_id;
 	gulong parent_hwaddr_id;
-	gulong parent_mtu_id;
 	guint vlan_id;
 } NMDeviceVlanPrivate;
 
@@ -82,17 +81,9 @@ parent_state_changed (NMDevice *parent,
 		return;
 
 	nm_device_set_unmanaged_by_flags (NM_DEVICE (self), NM_UNMANAGED_PARENT, !nm_device_get_managed (parent, FALSE), reason);
-}
 
-static void
-parent_mtu_maybe_changed (NMDevice *parent,
-                          GParamSpec *pspec,
-                          gpointer user_data)
-{
-	/* the MTU of a VLAN device is limited by the parent's MTU.
-	 *
-	 * When the parent's MTU changes, try to re-set the MTU. */
-	nm_device_commit_mtu (user_data);
+	if (nm_device_get_state (parent) == NM_DEVICE_STATE_ACTIVATED)
+		nm_device_commit_mtu (user_data);
 }
 
 static void
@@ -154,7 +145,6 @@ parent_changed_notify (NMDevice *device,
 	 *  parent_changed_notify(). */
 	nm_clear_g_signal_handler (old_parent, &priv->parent_state_id);
 	nm_clear_g_signal_handler (old_parent, &priv->parent_hwaddr_id);
-	nm_clear_g_signal_handler (old_parent, &priv->parent_mtu_id);
 
 	if (new_parent) {
 		priv->parent_state_id = g_signal_connect (new_parent,
@@ -165,10 +155,7 @@ parent_changed_notify (NMDevice *device,
 		priv->parent_hwaddr_id = g_signal_connect (new_parent, "notify::" NM_DEVICE_HW_ADDRESS,
 		                                           G_CALLBACK (parent_hwaddr_maybe_changed), device);
 		parent_hwaddr_maybe_changed (new_parent, NULL, self);
-
-		priv->parent_mtu_id = g_signal_connect (new_parent, "notify::" NM_DEVICE_MTU,
-		                                        G_CALLBACK (parent_mtu_maybe_changed), device);
-		parent_mtu_maybe_changed (new_parent, NULL, self);
+		nm_device_commit_mtu (device);
 
 		/* Set parent-dependent unmanaged flag */
 		nm_device_set_unmanaged_by_flags (device,
@@ -500,7 +487,7 @@ act_stage1_prepare (NMDevice *device, NMDeviceStateReason *out_failure_reason)
 	parent_device = nm_device_parent_get_device (device);
 	if (parent_device) {
 		parent_hwaddr_maybe_changed (parent_device, NULL, device);
-		parent_mtu_maybe_changed (parent_device, NULL, device);
+		nm_device_commit_mtu (device);
 	}
 
 	s_vlan = (NMSettingVlan *) nm_device_get_applied_setting (device, NM_TYPE_SETTING_VLAN);
@@ -536,6 +523,7 @@ act_stage1_prepare (NMDevice *device, NMDeviceStateReason *out_failure_reason)
 static guint32
 get_configured_mtu (NMDevice *self, NMDeviceMtuSource *out_source)
 {
+	NMDevice *parent;
 	guint32 mtu = 0;
 	int ifindex;
 
@@ -547,7 +535,12 @@ get_configured_mtu (NMDevice *self, NMDeviceMtuSource *out_source)
 	ifindex = nm_device_parent_get_ifindex (self);
 	if (ifindex > 0) {
 		mtu = nm_platform_link_get_mtu (nm_device_get_platform (NM_DEVICE (self)), ifindex);
-		*out_source = NM_DEVICE_MTU_SOURCE_PARENT;
+		parent = nm_device_parent_get_device (self);
+		if (   parent
+		    && nm_device_get_state (parent) == NM_DEVICE_STATE_ACTIVATED)
+			*out_source = NM_DEVICE_MTU_SOURCE_PARENT_ACTIVE;
+		else
+			*out_source = NM_DEVICE_MTU_SOURCE_PARENT;
 	}
 
 	return mtu;
