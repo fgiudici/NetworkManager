@@ -8371,12 +8371,16 @@ nm_device_get_configured_mtu_from_connection_default (NMDevice *self,
 }
 
 guint32
-nm_device_get_configured_mtu_for_wired (NMDevice *self, gboolean *out_is_user_config)
+nm_device_get_configured_mtu_from_connection (NMDevice *self,
+                                              GType setting_type,
+                                              const char *property_name,
+                                              const char *global_property_name,
+                                              gboolean *out_is_user_config)
 {
 	NMConnection *connection;
-	NMSettingWired *setting;
+	NMSetting *setting;
 	gint64 mtu_default;
-	guint32 mtu;
+	guint32 mtu = 0;
 
 	nm_assert (NM_IS_DEVICE (self));
 	nm_assert (out_is_user_config);
@@ -8385,17 +8389,18 @@ nm_device_get_configured_mtu_for_wired (NMDevice *self, gboolean *out_is_user_co
 	if (!connection)
 		g_return_val_if_reached (0);
 
-	setting = nm_connection_get_setting_wired (connection);
 
+	setting = nm_connection_get_setting (connection, setting_type);
 	if (setting) {
-		mtu = nm_setting_wired_get_mtu (setting);
+		/* FIXME: add check on property type */
+		g_object_get (setting, property_name, &mtu, NULL);
 		if (mtu) {
 			*out_is_user_config = TRUE;
 			return mtu;
 		}
 	}
 
-	mtu_default = nm_device_get_configured_mtu_from_connection_default (self, "ethernet.mtu");
+	mtu_default = nm_device_get_configured_mtu_from_connection_default (self, global_property_name);
 	if (mtu_default >= 0) {
 		*out_is_user_config = TRUE;
 		return (guint32) mtu_default;
@@ -8403,6 +8408,16 @@ nm_device_get_configured_mtu_for_wired (NMDevice *self, gboolean *out_is_user_co
 
 	*out_is_user_config = FALSE;
 	return 0;
+}
+
+guint32
+nm_device_get_configured_mtu_for_wired (NMDevice *self, gboolean *out_is_user_config)
+{
+	return nm_device_get_configured_mtu_from_connection (self,
+	                                                     NM_TYPE_SETTING_WIRED,
+	                                                     NM_SETTING_WIRED_MTU,
+	                                                     "ethernet.mtu",
+	                                                     out_is_user_config);
 }
 
 /*****************************************************************************/
