@@ -349,8 +349,9 @@ typedef struct _NMDevicePrivate {
 	gulong          config_changed_id;
 	guint32         mtu;
 	guint32         ip6_mtu;
-	guint32 mtu_initial;
-	guint32 ip6_mtu_initial;
+	guint32         mtu_initial;
+	guint32         ip6_mtu_initial;
+	NMDeviceMtuSource mtu_source;
 
 	guint32         v4_route_table;
 	guint32         v6_route_table;
@@ -365,8 +366,6 @@ typedef struct _NMDevicePrivate {
 
 	bool            carrier:1;
 	bool            ignore_carrier:1;
-
-	bool mtu_initialized:1;
 
 	bool            up:1;   /* IFF_UP */
 
@@ -4001,7 +4000,7 @@ realize_start_setup (NMDevice *self,
 	/* Balanced by a thaw in nm_device_realize_finish() */
 	g_object_freeze_notify (G_OBJECT (self));
 
-	priv->mtu_initialized = FALSE;
+	priv->mtu_source = NM_DEVICE_MTU_SOURCE_NONE;
 	priv->mtu_initial = 0;
 	priv->ip6_mtu_initial = 0;
 	priv->ip6_mtu = 0;
@@ -8446,6 +8445,7 @@ static void
 _commit_mtu (NMDevice *self, const NMIP4Config *config)
 {
 	NMDevicePrivate *priv = NM_DEVICE_GET_PRIVATE (self);
+	NMDeviceMtuSource source = NM_DEVICE_MTU_SOURCE_NONE;
 	guint32 ip6_mtu, ip6_mtu_orig;
 	guint32 mtu_desired, mtu_desired_orig;
 	guint32 mtu_plat;
@@ -8455,6 +8455,7 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 	} ip6_mtu_sysctl = { 0, };
 	int ifindex;
 	char sbuf[64], sbuf1[64], sbuf2[64];
+	gboolean success = TRUE;
 
 	ifindex = nm_device_get_ip_ifindex (self);
 	if (ifindex <= 0)
@@ -8468,7 +8469,6 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 	}
 
 	{
-		NMDeviceMtuSource mtu_source = NM_DEVICE_MTU_SOURCE_NONE;
 		guint32 mtu = 0;
 
 		/* preferably, get the MTU from explict user-configuration.
@@ -8476,23 +8476,24 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 		 * MTUs from DHCP/PPP) or maybe fallback to a device-specific MTU. */
 
 		if (NM_DEVICE_GET_CLASS (self)->get_configured_mtu)
-			mtu = NM_DEVICE_GET_CLASS (self)->get_configured_mtu (self, &mtu_source);
+			mtu = NM_DEVICE_GET_CLASS (self)->get_configured_mtu (self, &source);
 
-		if (mtu_source == NM_DEVICE_MTU_SOURCE_CONNECTION)
+		if (   config
+		    && source < NM_DEVICE_MTU_SOURCE_IP_CONFIG
+			&& nm_ip4_config_get_mtu (config)) {
+			mtu = nm_ip4_config_get_mtu (config);
+			source = NM_DEVICE_MTU_SOURCE_IP_CONFIG;
+		}
+
+		_LOGT (LOGD_CORE,
+		       "configured MTU %u, source %u, current source %u",
+		       (guint) mtu, (guint) source, (guint) priv->mtu_source);
+
+		if (source > priv->mtu_source)
 			mtu_desired = mtu;
 		else {
-			if (config)
-				mtu_desired = nm_ip4_config_get_mtu (config);
-			else
-				mtu_desired = 0;
-			if (!mtu_desired && !priv->mtu_initialized) {
-				/* there is no MTU specified, and this is the first commit of the MTU.
-				 * Reset a per-device MTU default, as returned from get_configured_mtu().
-				 *
-				 * The device might choose not to return a default MTU via get_configured_mtu()
-				 * to suppress this behavior. */
-				mtu_desired = mtu;
-			}
+			mtu_desired = 0;
+			source = NM_DEVICE_MTU_SOURCE_NONE;
 		}
 	}
 
@@ -8514,15 +8515,13 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 	}
 
 	ip6_mtu = priv->ip6_mtu;
-	if (!ip6_mtu && !priv->mtu_initialized) {
+	if (!ip6_mtu && priv->mtu_source == NM_DEVICE_MTU_SOURCE_NONE) {
 		/* initially, if the IPv6 MTU is not specified, grow it as large as the
 		 * link MTU @mtu_desired. Only exception is, if @mtu_desired is so small
 		 * to disable IPv6. */
 		if (mtu_desired >= 1280)
 			ip6_mtu = mtu_desired;
 	}
-
-	priv->mtu_initialized = TRUE;
 
 	if (!ip6_mtu && !mtu_desired)
 		return;
@@ -8575,6 +8574,7 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 		if (mtu_desired && mtu_desired != mtu_plat) {
 			if (nm_platform_link_set_mtu (nm_device_get_platform (self), ifindex, mtu_desired) == NM_PLATFORM_ERROR_CANT_SET_MTU) {
 				anticipated_failure = TRUE;
+				success = FALSE;
 				_LOGW (LOGD_DEVICE, "mtu: failure to set MTU. %s",
 				       NM_IS_DEVICE_VLAN (self)
 				         ? "Is the parent's MTU size large enough?"
@@ -8596,10 +8596,15 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 				        anticipated_failure && errsv == EINVAL
 				           ? ": Is the underlying MTU value successfully set?"
 				           : "");
+				success = FALSE;
 			}
 			priv->carrier_wait_until_ms = nm_utils_get_monotonic_timestamp_ms () + CARRIER_WAIT_TIME_AFTER_MTU_MS;
 		}
 	}
+
+	if (success && source != NM_DEVICE_MTU_SOURCE_NONE)
+		priv->mtu_source = source;
+
 #undef _IP6_MTU_SYS
 }
 
@@ -13635,7 +13640,7 @@ nm_device_cleanup (NMDevice *self, NMDeviceStateReason reason, CleanupType clean
 		NM_DEVICE_GET_CLASS (self)->deactivate_reset_hw_addr (self);
 	}
 
-	priv->mtu_initialized = FALSE;
+	priv->mtu_source = NM_DEVICE_MTU_SOURCE_NONE;
 	if (priv->mtu_initial || priv->ip6_mtu_initial) {
 		ifindex = nm_device_get_ip_ifindex (self);
 
