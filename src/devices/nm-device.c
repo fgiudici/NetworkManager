@@ -8375,7 +8375,7 @@ nm_device_get_configured_mtu_from_connection (NMDevice *self,
                                               GType setting_type,
                                               const char *property_name,
                                               const char *global_property_name,
-                                              gboolean *out_is_user_config)
+                                              NMDeviceMtuSource *out_source)
 {
 	NMConnection *connection;
 	NMSetting *setting;
@@ -8383,7 +8383,7 @@ nm_device_get_configured_mtu_from_connection (NMDevice *self,
 	guint32 mtu = 0;
 
 	nm_assert (NM_IS_DEVICE (self));
-	nm_assert (out_is_user_config);
+	nm_assert (out_source);
 
 	connection = nm_device_get_applied_connection (self);
 	if (!connection)
@@ -8395,29 +8395,29 @@ nm_device_get_configured_mtu_from_connection (NMDevice *self,
 		/* FIXME: add check on property type */
 		g_object_get (setting, property_name, &mtu, NULL);
 		if (mtu) {
-			*out_is_user_config = TRUE;
+			*out_source = NM_DEVICE_MTU_SOURCE_CONNECTION;
 			return mtu;
 		}
 	}
 
 	mtu_default = nm_device_get_configured_mtu_from_connection_default (self, global_property_name);
 	if (mtu_default >= 0) {
-		*out_is_user_config = TRUE;
+		*out_source = NM_DEVICE_MTU_SOURCE_CONNECTION;
 		return (guint32) mtu_default;
 	}
 
-	*out_is_user_config = FALSE;
+	*out_source = NM_DEVICE_MTU_SOURCE_NONE;
 	return 0;
 }
 
 guint32
-nm_device_get_configured_mtu_for_wired (NMDevice *self, gboolean *out_is_user_config)
+nm_device_get_configured_mtu_for_wired (NMDevice *self, NMDeviceMtuSource *out_source)
 {
 	return nm_device_get_configured_mtu_from_connection (self,
 	                                                     NM_TYPE_SETTING_WIRED,
 	                                                     NM_SETTING_WIRED_MTU,
 	                                                     "ethernet.mtu",
-	                                                     out_is_user_config);
+	                                                     out_source);
 }
 
 /*****************************************************************************/
@@ -8468,7 +8468,7 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 	}
 
 	{
-		gboolean mtu_is_user_config = FALSE;
+		NMDeviceMtuSource mtu_source = NM_DEVICE_MTU_SOURCE_NONE;
 		guint32 mtu = 0;
 
 		/* preferably, get the MTU from explict user-configuration.
@@ -8476,9 +8476,9 @@ _commit_mtu (NMDevice *self, const NMIP4Config *config)
 		 * MTUs from DHCP/PPP) or maybe fallback to a device-specific MTU. */
 
 		if (NM_DEVICE_GET_CLASS (self)->get_configured_mtu)
-			mtu = NM_DEVICE_GET_CLASS (self)->get_configured_mtu (self, &mtu_is_user_config);
+			mtu = NM_DEVICE_GET_CLASS (self)->get_configured_mtu (self, &mtu_source);
 
-		if (mtu_is_user_config)
+		if (mtu_source == NM_DEVICE_MTU_SOURCE_CONNECTION)
 			mtu_desired = mtu;
 		else {
 			if (config)
