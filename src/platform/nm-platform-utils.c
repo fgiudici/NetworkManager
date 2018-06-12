@@ -384,6 +384,58 @@ nmp_utils_ethtool_get_link_settings (int ifindex,
 	return TRUE;
 }
 
+
+#define ADVERTISED_INVALID 0
+#define BASET_ALL_MODES (  ADVERTISED_10baseT_Half \
+                         | ADVERTISED_10baseT_Full \
+                         | ADVERTISED_100baseT_Half \
+                         | ADVERTISED_100baseT_Full \
+                         | ADVERTISED_1000baseT_Half \
+                         | ADVERTISED_1000baseT_Full \
+                         | ADVERTISED_10000baseT_Full )
+
+static inline guint32
+get_baset_mode (guint32 speed, NMPlatformLinkDuplexType duplex)
+{
+	if (duplex == NM_PLATFORM_LINK_DUPLEX_UNKNOWN)
+		return ADVERTISED_INVALID;
+
+	if (duplex == NM_PLATFORM_LINK_DUPLEX_HALF) {
+		switch (speed) {
+		case 10:
+			return ADVERTISED_10baseT_Half;
+			break;
+		case 100:
+			return ADVERTISED_100baseT_Half;
+			break;
+		case 1000:
+			return ADVERTISED_1000baseT_Half;
+			break;
+		default:
+			break;
+		}
+	} else {
+		switch (speed) {
+		case 10:
+			return ADVERTISED_10baseT_Full;
+			break;
+		case 100:
+			return ADVERTISED_100baseT_Full;
+			break;
+		case 1000:
+			return ADVERTISED_1000baseT_Full;
+			break;
+		case 10000:
+			return ADVERTISED_10000baseT_Full;
+			break;
+		default:
+			break;
+		}
+	}
+
+	return ADVERTISED_INVALID;
+}
+
 gboolean
 nmp_utils_ethtool_set_link_settings (int ifindex,
                                      gboolean autoneg,
@@ -395,6 +447,7 @@ nmp_utils_ethtool_set_link_settings (int ifindex,
 	};
 
 	g_return_val_if_fail (ifindex > 0, FALSE);
+	g_return_val_if_fail ((!speed && duplex) || (speed && !duplex), FALSE);
 
 	/* retrieve first current settings */
 	if (!ethtool_get (ifindex, &edata))
@@ -404,7 +457,31 @@ nmp_utils_ethtool_set_link_settings (int ifindex,
 	edata.cmd = ETHTOOL_SSET;
 	if (autoneg) {
 		edata.autoneg = AUTONEG_ENABLE;
-		edata.advertising = edata.supported;
+		if (!speed)
+			edata.advertising = edata.supported;
+		else {
+			guint32 mode;
+
+			mode = get_baset_mode (speed, duplex);
+
+			if (!mode) {
+				nm_log_trace (LOGD_PLATFORM,
+				              "ethtool[%d]: %uBASE-T %s duplex mode cannot be advertised",
+				              ifindex,
+				              speed,
+				              (duplex == NM_PLATFORM_LINK_DUPLEX_HALF) ? "Half" : "Full");
+				return FALSE;
+			}
+			if (!(edata.supported & mode)) {
+				nm_log_trace (LOGD_PLATFORM,
+				              "ethtool[%d]: device does not support %uBASE-T %s duplex mode",
+				              ifindex,
+				              speed,
+			                      (duplex == NM_PLATFORM_LINK_DUPLEX_HALF) ? "Half" : "Full");
+				return FALSE;
+			}
+			edata.advertising = (edata.supported & ~BASET_ALL_MODES) | mode;
+		}
 	} else {
 		edata.autoneg = AUTONEG_DISABLE;
 
